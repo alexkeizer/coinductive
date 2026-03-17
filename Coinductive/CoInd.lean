@@ -232,6 +232,16 @@ theorem fold_unfold x :
   simp
 
 /-!
+## CasesOn Principle
+-/
+
+@[cases_eliminator]
+def CoInd.casesOn' [P : PF F] {motive : CoInd F → Sort v}
+    (unfold : ∀ (x : F (CoInd F)), motive (CoInd.fold _ x))
+    (x : CoInd F) : motive x := by
+  sorry
+
+/-!
 ## Cofixpoint
 
 The **cofixpoint** of a coalgebra `f : α → F α` produces a `CoInd F` element by
@@ -282,6 +292,30 @@ We equip `CoInd F` with a partial order where the bottom element `⊥` is  given
 and `c1 ≤ c2` is defined coinductively: either `c1 = ⊥`, or `c1` and `c2` have the
 same shape and all corresponding children satisfy `c1_child ≤ c2_child`.
 -/
+
+instance [i : PF F] : PF (Option <| F ·) where
+  P := {
+    In := Option i.P.In
+    Out := fun
+      | none => PEmpty
+      | some x => i.P.Out x
+  }
+  pack
+    | .obj none _ => none
+    | .obj (some x) y => some (i.pack (.obj x y))
+  unpack
+    | none => .obj none PEmpty.elim
+    | some x =>
+      let .obj x y := i.unpack x
+      .obj (some x) y
+  unpack_pack x := by cases x <;> grind [i.unpack_pack]
+  pack_unpack x := by
+    match x with
+    | .obj none f => simp; funext; contradiction
+    | .obj (some x) _ => grind [i.pack_unpack]
+
+instance : Inhabited ((Option <| F ·) PUnit) where
+  default := none
 
 /-- The bottom element of `CoInd F`, given by taking the cofixpoint of `Inhabited (F PUnit)`. -/
 def CoInd.bot [Inhabited (F PUnit)] : CoInd F :=
