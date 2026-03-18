@@ -5,11 +5,16 @@ open Coinductive Lean.Order
 
 inductive StreamF (α : Type w) (Stream : Type w) : Type w where
   | snil
-  | scons (x : α) (tl : Stream)
+  | scons (x : α) (tl : Thunk Stream)
 
 inductive StreamF.In (α : Type u) : Type u where
   | snil
   | scons (x : α)
+
+@[simp, grind =] theorem Thunk.get_mk (fn : Unit → α) : Thunk.get ⟨fn⟩ = fn () := by rfl
+
+@[simp] theorem Thunk.mk_get (x : Thunk α) : Thunk.mk (fun _ => x.get) = x := by
+  simp [Thunk.ext_iff]
 
 instance (α : Type u) : PF (StreamF α) where
   P := ⟨StreamF.In α, fun
@@ -17,7 +22,7 @@ instance (α : Type u) : PF (StreamF α) where
     | .scons _ => PUnit⟩
   unpack
     | .snil => .obj (.snil) nofun
-    | .scons hd tl => .obj (.scons hd) λ _ => tl
+    | .scons hd tl => .obj (.scons hd) λ _ => tl.get
   pack
     | .obj (.snil) _ => .snil
     | .obj (.scons hd) tl => .scons hd (tl ⟨⟩)
@@ -28,7 +33,7 @@ abbrev Stream (α : Type u) : Type u := CoInd (StreamF α)
 
 def Stream.fold (t : StreamF α (Stream α)) : Stream α := CoInd.fold _ t
 def Stream.snil {α : Type u} : Stream α := Stream.fold (.snil)
-def Stream.scons {α : Type u} (hd : α) (tl : Stream α) : Stream α := Stream.fold (.scons hd tl)
+def Stream.scons {α : Type u} (hd : α) (tl : Thunk (Stream α)) : Stream α := Stream.fold (.scons hd tl)
 
 @[simp]
 theorem snil_approx_1 α n :
@@ -37,7 +42,7 @@ theorem snil_approx_1 α n :
 
 @[simp]
 theorem scons_approx_1 α i (s : Stream α) n :
-  (Stream.scons i s).approx (n + 1) = StreamF.scons i (s.approx n) := by
+  (Stream.scons i s).approx (n + 1) = StreamF.scons i (Thunk.mk (fun _ => s.approx n)) := by
     simp [Stream.scons, Stream.fold, CoInd.fold, PF.map, PF.pack]
 
 @[simp]
@@ -61,7 +66,7 @@ theorem Stream.bot_eq α :
 
 theorem Stream.le_unfold α (s1 s2 : Stream α) :
   (s1 ⊑ s2) = (s1 = .snil ∨
-    ∃ i s1' s2', s1 = .scons i s1' ∧ s2 = .scons i s2' ∧ s1' ⊑ s2') := by
+    ∃ i s1' s2', s1 = .scons i s1' ∧ s2 = .scons i s2' ∧ s1'.get ⊑ s2'.get) := by
     ext
     constructor
     · intro h
@@ -85,8 +90,8 @@ theorem Stream.le_unfold α (s1 s2 : Stream α) :
         constructor <;> try rfl
         grind
 
-theorem scons_monoN α i (s1 s2 : Stream α) n :
-  CoIndN.le _ (s1.approx n) (s2.approx n) →
+theorem scons_monoN α i (s1 s2 : Thunk (Stream α)) n :
+  CoIndN.le _ (s1.get.approx n) (s2.get.approx n) →
   CoIndN.le _ ((Stream.scons i s1).approx (n + 1))
     ((Stream.scons i s2).approx (n + 1))
  := by
@@ -96,10 +101,16 @@ theorem scons_monoN α i (s1 s2 : Stream α) n :
     constructor <;> try rfl
     grind [coherent1]
 
+instance [PartialOrder α] : PartialOrder (Thunk α) where
+  rel x y       := x.get ⊑ y.get
+  rel_refl      := by grind [PartialOrder.rel_refl]
+  rel_trans     := by grind [PartialOrder.rel_trans]
+  rel_antisymm  := by grind [PartialOrder.rel_antisymm, Thunk.ext]
+
 @[partial_fixpoint_monotone]
 theorem scons_mono β α [PartialOrder β] i (f : β → Stream α) :
   monotone f →
-  monotone (λ x => Stream.scons i (f x)) := by
+  monotone (λ x => Stream.scons i (Thunk.mk fun _ => f x)) := by
     intro hf t1 t2 hle
     apply CoInd.le_leN
     rintro ⟨n⟩; simp [CoIndN.le]
@@ -109,7 +120,7 @@ theorem scons_mono β α [PartialOrder β] i (f : β → Stream α) :
 def Stream.map {α} (f : α → β) (s : Stream α) : Stream β :=
   match s.unfold with
   | .snil => .snil
-  | .scons hd tl => .scons (f hd) (Stream.map f tl)
+  | .scons hd tl => .scons (f hd) (Stream.map f tl.get)
 partial_fixpoint
 
 @[partial_fixpoint_monotone]
@@ -130,6 +141,7 @@ theorem map_mono α β γ [PartialOrder γ] (f : α → β) (g : γ → Stream �
     next h =>
     rcases h with ⟨_, _, _, _, _, _⟩
     simp [*]
+    stop
     apply scons_monoN
     grind
 
@@ -137,7 +149,7 @@ theorem map_mono α β γ [PartialOrder γ] (f : α → β) (g : γ → Stream �
 def Stream.stail {α} (s : Stream α) : Stream α :=
   match s.unfold with
   | .snil => .snil
-  | .scons _ tl => tl
+  | .scons _ tl => tl.get
 
 @[partial_fixpoint_monotone]
 theorem stail_mono β α [PartialOrder β] (f : β → Stream α) :
@@ -165,7 +177,7 @@ def Stream.shead {α} (s : Stream α) : Option α :=
   | .scons hd _ => some hd
 
 def s3 : Stream Nat :=
-  .scons 0 $ .scons 1 $ .stail s3
+  .scons 0 $ Stream.scons 1 $ Stream.stail s3
 partial_fixpoint
 
 theorem s3_head :
@@ -180,3 +192,27 @@ partial_fixpoint
 -- test universe polymorphism
 def univpoly : Stream PUnit.{u + 1} := .scons ⟨⟩ univpoly
 partial_fixpoint
+
+def Stream.nats (n := 0) : Stream Nat :=
+  scons n (nats (n+1))
+partial_fixpoint
+
+def Stream.take (xs : Stream α) : Nat → List (Option α)
+  | 0 => []
+  | n+1 => xs.shead :: xs.stail.take n
+
+def Stream.get (xs : Stream α) : Nat → Option α
+  | 0  => xs.shead
+  | n+1 => xs.stail.get n
+
+#time
+  #eval Stream.nats.get 10
+
+#time
+  #eval Stream.nats.get 1000
+
+#time
+  #eval Stream.nats.get 2000
+
+#time
+  #eval Stream.nats.get 1000
